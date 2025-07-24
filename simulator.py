@@ -3,6 +3,7 @@ from ProDistribution import ProDistribution
 from type import Style
 import random
 import csv
+import pandas as pd
 
 """
 优化方案：
@@ -124,6 +125,7 @@ class Simulator:
         print("=" * 80)
         for i, character in enumerate(self.characters, 1):
             success_count = 0
+            no_main_attribute_count = 0  # 统计没有主攻属性的轮数
             print(f"\n角色 {i} (等级{character.get_level()}, havetool={character.get_havetool()}):")
             for round_idx in range(1, rounds+1):
                 character.reset_all_attributes()
@@ -141,10 +143,18 @@ class Simulator:
                     if selected_style is None:
                         selected_style = three_cards[0]
                     character.increase_attribute_value(selected_style, 1)
+                
+                # 检查本轮结束时是否有主攻属性
+                if character.get_attribute_value(character.attribute) == 0:
+                    no_main_attribute_count += 1
+                
                 if character.get_attribute_value(character.attribute) > threshold:
                     success_count += 1
+            
             ratio = success_count / rounds
+            no_main_ratio = no_main_attribute_count / rounds
             print(f"  自身流派属性值>{threshold}的比例 = {ratio:.3f}")
+            print(f"  属性池没有主攻属性的比例 = {no_main_ratio:.3f}")
 
     def simulate_and_generate_csv(self, draw_count=15, rounds=1000):
         """模拟多轮并生成CSV文件，统计每个角色在每次抽卡后自身流派属性值的分布"""
@@ -210,47 +220,63 @@ class Simulator:
                         character_stats[i][draw + 1][current_value] = 0
                     character_stats[i][draw + 1][current_value] += 1
         
-        # 生成CSV文件
-        self._generate_csv_files(character_stats, draw_count, rounds)
+        # 生成Excel文件
+        self._generate_excel_files(character_stats, draw_count, rounds)
         
-        print("CSV文件生成完成！")
+        print("Excel文件生成完成！")
     
-    def _generate_csv_files(self, character_stats, draw_count, rounds):
-        """生成CSV文件"""
+    def _generate_excel_files(self, character_stats, draw_count, rounds):
+        """生成Excel文件"""
         character_names = [
-            "熔岩球_lv5_toolFalse",
-            "熔岩球_lv5_toolTrue", 
-            "熔岩球_lv18_toolFalse",
-            "熔岩球_lv18_toolTrue",
-            "熔岩球_lv35_toolFalse",
-            "熔岩球_lv35_toolTrue"
+            "熔岩球_lv5_无灵器",
+            "熔岩球_lv5_有灵器", 
+            "熔岩球_lv18_无灵器",
+            "熔岩球_lv18_有灵器",
+            "熔岩球_lv35_无灵器",
+            "熔岩球_lv35_有灵器"
         ]
         
-        for i, character in enumerate(self.characters):
-            filename = f"{character_names[i]}.csv"
-            print(f"  生成文件: {filename}")
-            
-            # 获取该角色所有可能的属性值
-            all_values = set()
-            for draw in range(draw_count + 1):
-                all_values.update(character_stats[i][draw].keys())
-            all_values = sorted(list(all_values))
-            
-            with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-                writer = csv.writer(csvfile)
+        filename = "simulation_results.xlsx"
+        print(f"  生成文件: {filename}")
+        
+        # 创建Excel写入器
+        with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+            for i, character in enumerate(self.characters):
+                # 获取该角色所有可能的属性值
+                all_values = set()
+                for draw in range(draw_count + 1):
+                    all_values.update(character_stats[i][draw].keys())
+                all_values = sorted(list(all_values))
                 
-                # 写入表头
-                header = [''] + [f"The {j}th gacha" for j in range(draw_count + 1)]
-                writer.writerow(header)
-                
-                # 写入数据行
+                # 创建数据框
+                data = []
                 for value in all_values:
                     row = [f"aimming_level{value}"]
                     for draw in range(draw_count + 1):
                         count = character_stats[i][draw].get(value, 0)
                         ratio = count / rounds
                         row.append(f"{ratio:.4f}")
-                    writer.writerow(row)
+                    data.append(row)
+                
+                # 创建列名
+                columns = [''] + [f"The {j}th gacha" for j in range(draw_count + 1)]
+                
+                # 创建DataFrame
+                df = pd.DataFrame(data, columns=columns)
+                
+                # 获取havetool的中文描述
+                havetool_text = "有灵器" if character.get_havetool() else "无灵器"
+                
+                # 写入Excel工作表
+                sheet_name = f"等级{character.get_level()}_{havetool_text}"
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+                
+                # 添加角色信息到工作表
+                worksheet = writer.sheets[sheet_name]
+                worksheet.insert_rows(1, 3)  # 在顶部插入3行
+                worksheet['A1'] = f"角色信息: {character_names[i]}"
+                worksheet['A2'] = f"等级: {character.get_level()}, 灵器: {havetool_text}"
+                worksheet['A3'] = ""  # 空行
 
 
 
@@ -259,7 +285,7 @@ def main():
     simulator = Simulator()
     #simulator.simulate_attribute_value_ratio(draw_count=15, rounds=1000, threshold=7)
     #simulator.simulate_card_drawing(15)
-    simulator.simulate_and_generate_csv(draw_count=15, rounds=1000)
+    simulator.simulate_and_generate_csv(draw_count=20, rounds=1000)
 
 if __name__ == "__main__":
     main()
