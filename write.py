@@ -162,6 +162,9 @@ def write_data_cell(worksheet, cell_address, content, is_numeric=False):
         cell_address: 单元格地址
         content: 要写入的内容
         is_numeric: 是否为数值类型
+        
+    Note:
+        此函数在simulator.py中未使用，可考虑移除
     """
     data_style = {
         'font': {

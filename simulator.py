@@ -2,13 +2,16 @@ from character import Character
 from ProDistribution import ProDistribution
 from type import Style
 import random
-import csv
 import pandas as pd
 from write import write_header_cell, write_percentage_cell, write_max_value_cell, write_gacha_legend, apply_data_bars
 
 """
-优化方案：
-1. 添加约束，stylecount = 3时，保证主攻流派在三个流派中
+游戏模拟器系统
+
+功能说明：
+- 模拟角色抽卡过程
+- 支持多轮统计和Excel文件生成
+- 提供概率分布计算和数据分析
 """
 
 class Simulator:
@@ -44,12 +47,81 @@ class Simulator:
             char_35_false, char_35_true
         ]
     
-    def simulate_card_drawing(self, draw_count=15):
-        """模拟抽卡过程"""
-        print(f"\n=== 模拟{draw_count}次抽卡 ===")
-        print("=" * 80)
+    def _perform_single_draw(self, character, enable_reroll=True, remaining_rerolls=0):
+        """
+        执行单次抽卡，包含重新roll功能
         
-        import random
+        Args:
+            character: 角色对象
+            enable_reroll: 是否启用重新roll功能，默认True
+            remaining_rerolls: 剩余重新roll次数，默认0次
+            
+        Returns:
+            tuple: (selected_style, three_cards, reroll_count, reroll_history, remaining_rerolls)
+        """
+        reroll_count = 0
+        reroll_history = []
+        
+        while True:
+            # 获取当前概率分布
+            probabilities = self.pro_distribution.get_current_weight(character)
+            styles = list(probabilities.keys())
+            probs = list(probabilities.values())
+            
+            # 使用random.choices进行加权随机选择三个流派
+            three_cards = random.choices(styles, weights=probs, k=3)
+            
+            # 角色选择逻辑：优先选择和自身属性相同的流派
+            character_attribute = character.attribute
+            selected_style = None
+            
+            # 检查是否有与自身属性相同的流派
+            for card in three_cards:
+                if card == character_attribute:
+                    selected_style = card
+                    break
+            
+            # 如果没有找到相同属性的流派，选择第一个
+            if selected_style is None:
+                selected_style = three_cards[0]
+            
+            # 检查是否需要重新roll
+            should_reroll = False
+            if enable_reroll and remaining_rerolls > 0:
+                # 条件1：三张卡牌全不是自身流派
+                no_main_style = character_attribute not in three_cards
+                
+                # 条件2：自身已拿到主攻流派或目前还没凑齐三个流派
+                has_main_style = character.get_attribute_value(character_attribute) > 0
+                style_count_less_than_3 = character.get_style_count() < 3
+                
+                should_reroll = no_main_style and (has_main_style or style_count_less_than_3)
+            
+            if should_reroll:
+                reroll_count += 1
+                remaining_rerolls -= 1
+                reroll_history.append(three_cards.copy())
+                continue
+            else:
+                break
+        
+        return selected_style, three_cards, reroll_count, reroll_history, remaining_rerolls
+
+    def simulate_card_drawing(self, draw_count=15, enable_reroll=True, max_rerolls=2):
+        """
+        模拟抽卡过程
+        
+        Args:
+            draw_count: 抽卡次数，默认15次
+            enable_reroll: 是否启用重新roll功能，默认True
+            max_rerolls: 一轮完整模拟中最大重新roll次数，默认2次
+        """
+        print(f"\n=== 模拟{draw_count}次抽卡 ===")
+        if enable_reroll:
+            print(f"重新roll功能: 启用 (一轮最多{max_rerolls}次)")
+        else:
+            print("重新roll功能: 禁用")
+        print("=" * 80)
         
         for i, character in enumerate(self.characters, 1):
             print(f"\n角色 {i} (等级{character.get_level()}, havetool={character.get_havetool()}):")
@@ -60,37 +132,30 @@ class Simulator:
             
             # 模拟抽卡过程
             draw_results = []
+            remaining_rerolls = max_rerolls  # 初始化剩余重新roll次数
+            
             for draw in range(draw_count):
                 # 获取当前概率分布
                 probabilities = self.pro_distribution.get_current_weight(character)
                 # 展示当前各个流派的权重
                 prob_str = ', '.join([f"{k}:{v:.3f}" for k, v in probabilities.items()])
                 print(f"    第{draw+1}次抽卡前流派权重: {prob_str}")
-                # 根据概率分布随机选择三个流派（可以重复）
-                styles = list(probabilities.keys())
-                probs = list(probabilities.values())
+                if enable_reroll:
+                    print(f"    剩余重新roll次数: {remaining_rerolls}")
                 
-                # 使用random.choices进行加权随机选择三个流派
-                three_cards = random.choices(styles, weights=probs, k=3)
+                # 执行单次抽卡
+                selected_style, three_cards, reroll_count, reroll_history, remaining_rerolls = self._perform_single_draw(
+                    character, enable_reroll, remaining_rerolls
+                )
                 
-                # 角色选择逻辑：优先选择和自身属性相同的流派
-                character_attribute = character.attribute
-                selected_style = None
-                
-                # 检查是否有与自身属性相同的流派
-                for card in three_cards:
-                    if card == character_attribute:
-                        selected_style = card
-                        break
-                
-                # 如果没有找到相同属性的流派，选择第一个
-                if selected_style is None:
-                    selected_style = three_cards[0]
-                
-                draw_results.append({
+                # 记录抽卡结果
+                draw_result = {
                     'cards': three_cards,
-                    'selected': selected_style
-                })
+                    'selected': selected_style,
+                    'reroll_count': reroll_count,
+                    'reroll_history': reroll_history
+                }
+                draw_results.append(draw_result)
                 
                 # 增加对应流派的value
                 character.increase_attribute_value(selected_style, 1)
@@ -116,13 +181,27 @@ class Simulator:
                 cards_str = ", ".join(result['cards'])
                 selected = result['selected']
                 selection_reason = "优先选择" if selected == character.attribute else "默认选择"
-                print(f"    第{j:2d}次: [{cards_str}] -> {selected} ({selection_reason})")
+                reroll_info = f" (重新roll{result['reroll_count']}次)" if result['reroll_count'] > 0 else ""
+                print(f"    第{j:2d}次: [{cards_str}] -> {selected} ({selection_reason}){reroll_info}")
             
             print(f"  流派数量变化: {initial_style_count} -> {final_style_count}")
     
-    def simulate_attribute_value_ratio(self, draw_count=15, rounds=10, threshold=7):
-        """模拟多轮并统计角色自身流派属性值大于threshold的比例"""
+    def simulate_attribute_value_ratio(self, draw_count=15, rounds=10, threshold=7, enable_reroll=True, max_rerolls=2):
+        """
+        模拟多轮并统计角色自身流派属性值大于threshold的比例
+        
+        Args:
+            draw_count: 每轮抽卡次数，默认15次
+            rounds: 模拟轮数，默认10轮
+            threshold: 阈值，默认7
+            enable_reroll: 是否启用重新roll功能，默认True
+            max_rerolls: 一轮完整模拟中最大重新roll次数，默认2次
+        """
         print(f"\n=== 模拟{rounds}轮，每轮{draw_count}次抽卡，统计自身流派属性值>{threshold}的比例 ===")
+        if enable_reroll:
+            print(f"重新roll功能: 启用 (一轮最多{max_rerolls}次)")
+        else:
+            print("重新roll功能: 禁用")
         print("=" * 80)
         for i, character in enumerate(self.characters, 1):
             success_count = 0
@@ -130,19 +209,12 @@ class Simulator:
             print(f"\n角色 {i} (等级{character.get_level()}, havetool={character.get_havetool()}):")
             for round_idx in range(1, rounds+1):
                 character.reset_all_attributes()
+                remaining_rerolls = max_rerolls  # 初始化剩余重新roll次数
                 for _ in range(draw_count):
-                    probabilities = self.pro_distribution.get_current_weight(character)
-                    styles = list(probabilities.keys())
-                    probs = list(probabilities.values())
-                    three_cards = random.choices(styles, weights=probs, k=3)
-                    character_attribute = character.attribute
-                    selected_style = None
-                    for card in three_cards:
-                        if card == character_attribute:
-                            selected_style = card
-                            break
-                    if selected_style is None:
-                        selected_style = three_cards[0]
+                    # 执行单次抽卡
+                    selected_style, _, _, _, remaining_rerolls = self._perform_single_draw(
+                        character, enable_reroll, remaining_rerolls
+                    )
                     character.increase_attribute_value(selected_style, 1)
                 
                 # 检查本轮结束时是否有主攻属性
@@ -157,59 +229,49 @@ class Simulator:
             print(f"  自身流派属性值>{threshold}的比例 = {ratio:.3f}")
             print(f"  属性池没有主攻属性的比例 = {no_main_ratio:.3f}")
 
-    def simulate_and_generate_csv(self, draw_count=15, rounds=1000):
-        print(f"\n=== 模拟{rounds}轮，每轮{draw_count}次抽卡，生成excel文件 ===")
+    def simulate_and_generate_excel(self, draw_count=15, rounds=1000, enable_reroll=True, max_rerolls=2):
+        """
+        模拟多轮抽卡并生成Excel文件
+        
+        Args:
+            draw_count: 每轮抽卡次数，默认15次
+            rounds: 模拟轮数，默认1000轮
+            enable_reroll: 是否启用重新roll功能，默认True
+            max_rerolls: 一轮完整模拟中最大重新roll次数，默认2次
+            
+        Returns:
+            None，生成Excel文件到当前目录
+        """
+        print(f"\n=== 模拟{rounds}轮，每轮{draw_count}次抽卡，生成Excel文件 ===")
+        if enable_reroll:
+            print(f"重新roll功能: 启用 (一轮最多{max_rerolls}次)")
+        else:
+            print("重新roll功能: 禁用")
         print("=" * 80)
         
-        # 为每个角色创建统计数据结构
-        character_stats = {}
-        for i, character in enumerate(self.characters):
-            # 初始化统计字典：{抽卡次数: {属性值: 出现次数}}
-            stats = {}
-            for draw in range(draw_count + 1):  # 0到draw_count，包含初始状态
-                stats[draw] = {}
-            character_stats[i] = stats
+        # 初始化统计数据
+        character_stats = []
+        for i in range(len(self.characters)):
+            character_stats.append({})
+            for j in range(draw_count + 1):
+                character_stats[i][j] = {}
         
         # 执行多轮模拟
         for round_idx in range(rounds):
-            if (round_idx + 1) % 100 == 0:
-                print(f"  完成第{round_idx + 1}轮模拟...")
-            
-            # 重置所有角色
+            # 重置所有角色属性
             for character in self.characters:
                 character.reset_all_attributes()
             
-            # 记录初始状态（第0次抽卡）
-            for i, character in enumerate(self.characters):
-                initial_value = character.get_attribute_value(character.attribute)
-                if initial_value not in character_stats[i][0]:
-                    character_stats[i][0][initial_value] = 0
-                character_stats[i][0][initial_value] += 1
+            # 初始化每个角色的剩余重新roll次数
+            remaining_rerolls_per_character = [max_rerolls] * len(self.characters)
             
             # 执行抽卡过程
             for draw in range(draw_count):
                 for i, character in enumerate(self.characters):
-                    # 获取当前概率分布
-                    probabilities = self.pro_distribution.get_current_weight(character)
-                    styles = list(probabilities.keys())
-                    probs = list(probabilities.values())
-                    
-                    # 使用random.choices进行加权随机选择三个流派
-                    three_cards = random.choices(styles, weights=probs, k=3)
-                    
-                    # 角色选择逻辑：优先选择和自身属性相同的流派
-                    character_attribute = character.attribute
-                    selected_style = None
-                    
-                    # 检查是否有与自身属性相同的流派
-                    for card in three_cards:
-                        if card == character_attribute:
-                            selected_style = card
-                            break
-                    
-                    # 如果没有找到相同属性的流派，选择第一个
-                    if selected_style is None:
-                        selected_style = three_cards[0]
+                    # 执行单次抽卡
+                    selected_style, _, _, _, remaining_rerolls_per_character[i] = self._perform_single_draw(
+                        character, enable_reroll, remaining_rerolls_per_character[i]
+                    )
                     
                     # 增加对应流派的value
                     character.increase_attribute_value(selected_style, 1)
@@ -226,7 +288,17 @@ class Simulator:
         print("Excel文件生成完成！")
     
     def _generate_excel_files(self, character_stats, draw_count, rounds):
-        """生成Excel文件"""
+        """
+        生成Excel文件，包含所有角色的抽卡统计数据
+        
+        Args:
+            character_stats: 角色统计数据字典
+            draw_count: 抽卡次数
+            rounds: 模拟轮数
+            
+        Returns:
+            None，生成Excel文件到当前目录
+        """
         filename = "simulation_results.xlsx"
         print(f"  生成文件: {filename}")
         
@@ -541,9 +613,27 @@ class Simulator:
 def main():
     """主函数"""
     simulator = Simulator()
-    #simulator.simulate_attribute_value_ratio(draw_count=15, rounds=1000, threshold=7)
-    #simulator.simulate_card_drawing(15)
-    simulator.simulate_and_generate_csv(draw_count=20, rounds=1000)
+    
+    # 示例1：启用重新roll功能（默认设置）
+    print("=== 示例1：启用重新roll功能（一轮最多2次） ===")
+    simulator.simulate_card_drawing(draw_count=10, enable_reroll=True, max_rerolls=2)
+    
+    # 示例2：禁用重新roll功能
+    print("\n" + "="*80)
+    print("=== 示例2：禁用重新roll功能 ===")
+    simulator.simulate_card_drawing(draw_count=10, enable_reroll=False)
+    
+    # 示例3：自定义重新roll次数
+    print("\n" + "="*80)
+    print("=== 示例3：自定义重新roll次数（一轮最多3次） ===")
+    simulator.simulate_card_drawing(draw_count=10, enable_reroll=True, max_rerolls=3)
+    
+    
+    # 示例4：生成Excel文件（启用重新roll）
+    print("\n" + "="*80)
+    print("=== 示例4：生成Excel文件（启用重新roll，一轮最多2次） ===")
+    simulator.simulate_and_generate_excel(draw_count=20, rounds=1000, enable_reroll=True, max_rerolls=2)
+    
 
 if __name__ == "__main__":
     main()

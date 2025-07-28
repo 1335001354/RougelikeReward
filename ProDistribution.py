@@ -1,7 +1,7 @@
 class ProDistribution:
     """概率分布类 - 基于动态技能名称"""
     
-    def __init__(self, initial_value=500, ratio=1.0):
+    def __init__(self, initial_value=500, ratio=0.6):
         """
         初始化概率分布
         
